@@ -102,7 +102,7 @@
 
 <p>The bug above was found and fixed in development. But &ldquo;I fixed it&rdquo; is a weak thing to say to someone deciding whether to hand you their files, so here is what the format does instead of resting on my confidence.</p>
 
-<p><strong>Every block carries an XXH64 checksum, verified on read.</strong> Corruption does not pass silently: it surfaces as an error naming the file and the block index. That is the difference between losing data and knowing you lost it.</p>
+<p><strong>Every block carries an XXH64 checksum, verified on read.</strong> Checksums do not prevent corruption, but they ensure corrupted data is never returned silently: a mismatch surfaces as an error naming the file and the block index.</p>
 
 <p><strong>Two superblocks with generation numbers.</strong> A commit writes the new snapshot into free space and only then switches the superblock, so a crash at any step leaves the previous consistent state intact. Commits never write over extents the last snapshot still references.</p>
 
@@ -110,7 +110,7 @@
 
 <p><strong>There is an integrity check</strong> that walks the superblock, the snapshot and every data block — in the app, and as <code>cdrive check</code>.</p>
 
-<p>None of that turns a young file system into a proven one, and I would not claim otherwise. It makes failure visible rather than silent, which is the property I would want from somebody else's storage code before trusting it with mine.</p>
+<p>None of that turns a young file system into a proven one, and I would not claim otherwise. What it rules out is the failure that actually costs you data: the one nobody notices until the backups have rotated.</p>
 
 <h2>The methodology lesson is the bigger one</h2>
 
