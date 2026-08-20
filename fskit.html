@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The kernel may write there at any time — notes from building a compressing file system on FSKit</title>
+<meta name="description" content="What it cost to write a compressing file system for macOS in user space: a data-eating bug, a documented contract I had not read, and measured numbers including the unflattering one.">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 24px 96px;
+    font: 18px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1a1a1f; background: #fff;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  header { padding: 72px 0 8px; }
+  h1 { font-size: 34px; line-height: 1.25; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .meta { color: #666; font-size: 15px; margin: 0; }
+  h2 { font-size: 24px; margin: 48px 0 12px; letter-spacing: -0.01em; }
+  h3 { font-size: 19px; margin: 32px 0 8px; }
+  p { margin: 0 0 18px; }
+  strong { font-weight: 650; }
+  code {
+    font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #f2f2f5; padding: 1px 5px; border-radius: 4px;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 22px 0; font-size: 16px; }
+  th { text-align: left; font-weight: 650; }
+  th, td { padding: 9px 0; border-bottom: 1px solid #e8e8ee; }
+  td:last-child, th:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  hr { border: 0; border-top: 1px solid #e8e8ee; margin: 48px 0 32px; }
+  .after { color: #555; font-size: 16px; }
+  a { color: #2B5BD0; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #ececf1; background: #16161a; }
+    .meta, .after { color: #9a9aa5; }
+    th, td, hr { border-color: #2c2c34; }
+    code { background: #24242b; }
+    a { color: #8AB0FF; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>The kernel may write there at any time</h1>
+  <p class="meta">Notes from building a compressing file system on FSKit · August 2026</p>
+</header>
+
+<p>macOS has had transparent file compression since 2011. It is called <code>decmpfs</code>, it is what makes a fresh install of the OS smaller than the sum of its files, and you can turn it on yourself with <code>afsctool</code> or <code>applesauce</code>.</p>
+
+<p>It has one property that is rarely mentioned: <strong>compression does not survive a rewrite.</strong> Compress a file, open it, save it, and it is stored uncompressed again. For a photo archive that does not matter. For anything a program writes to — a build cache, a database, a VM image, a log — it means the compression you applied on Monday is gone by Tuesday.</p>
+
+<p>I wanted the compression to live in the file system instead of in a file attribute, so that a rewritten block comes back compressed. macOS 15 introduced FSKit, which lets you write a file system in user space without a kernel extension. So I wrote one.</p>
+
+<p>This is what it cost me.</p>
+
+<h2>The bug that ate other people's data</h2>
+
+<p>Somewhere around the fourth month I had a file system that passed its tests, copied 14,885 files at 580 files a second, and produced a checksum mismatch roughly once every three runs.</p>
+
+<p>Once every three runs is the worst possible failure rate. It is frequent enough to be real and rare enough that a single clean run feels like a fix. Twice I &ldquo;fixed&rdquo; it and twice I was wrong — first by blaming hand-written <code>@objc</code> selectors, then by blaming early dictionary training. Both theories died the same way: the corruption reproduced on a build that had neither.</p>
+
+<p>What I had not done was read the header.</p>
+
+<p>FSKit has a call named <code>blockmapFile</code>. Your file system hands the kernel a map of physical extents, and the kernel does the I/O itself — no round trip through your process. That is where the speed comes from. The documentation comment on that call says the kernel keeps the mapping and <em>&ldquo;may perform I/O to this range (or a part of it) at any time&rdquo;</em> (FSKit, <code>FSVolumeExtent.h</code>).</p>
+
+<p>At any time. Not &ldquo;until you acknowledge the write&rdquo;. Not &ldquo;before <code>completeIO</code>&rdquo; — which, incidentally, can arrive asynchronously and tell you nothing about whether the kernel is done with the map.</p>
+
+<p>I was treating those extents as free the moment the write completed. When a file was truncated, its tail went straight back into the free list, got handed to the next file that asked for space, and then the kernel flushed a deferred write through the map it still held — on top of somebody else's data.</p>
+
+<p>There were four places doing this: trimming tails past EOF, rewriting a block in place, releasing the old extent after a flush, and moving blocks during background recompression. All four were correct under the model in my head and wrong under the model in the header.</p>
+
+<p>The fix is bookkeeping, not cleverness. Track which nodes have a live kernel mapping. When an extent is freed while a mapping is live, it goes to quarantine instead of the free list. Quarantine drains when the vnode is reclaimed and the mapping provably no longer exists — and even then into the pending list, not into immediate reuse, because of those asynchronous completions.</p>
+
+<p><strong>This is not an Apple bug.</strong> The behaviour is documented, in the file I should have read first. It is the kind of contract that is invisible until you violate it, and then it is invisible for a while longer, because it corrupts data belonging to a <em>different</em> file than the one you were touching.</p>
+
+<h3>The methodology lesson is the bigger one</h3>
+
+<p>At a 25–50% failure rate, one clean run means nothing. It means nothing twice.</p>
+
+<p>After the fix I ran eight volumes back to back in a single extension process: zero mismatches. On the version before, the same eight gave three mismatches, then three again. On the intermediate version, two. That is the only kind of evidence that was worth anything, and I did not start collecting it until after I had wasted two days on wrong theories built from single runs.</p>
+
+<p>If your bug is probabilistic, your test has to be too. I now refuse to believe any storage fix that has not survived at least four volumes in a row.</p>
+
+<h2>Three other things macOS taught me</h2>
+
+<p><strong>APFS materialises small sparse files.</strong> I packaged the container as a sparse bundle — a directory of fixed-size &ldquo;band&rdquo; files, the format Apple uses for sparse disk images. With Apple's default band size of 8 MiB, a volume holding 114 MiB of compressed data occupied 2.1 GB on disk: every band that was touched at all was allocated in full. Measured on an M4 Max: write 4 KiB into a hole and look at the allocation — 8 MiB band allocates 8 MiB, 16 MiB allocates 16 MiB, 20 MiB allocates 20 KiB. The threshold sits between 16 and 20 MiB. I use 32 MiB bands.</p>
+
+<p><strong><code>diskutil</code> is not the disk arbitration layer.</strong> For a long time I believed FSKit volumes could not be unmounted programmatically, because <code>diskutil unmount</code> answered &ldquo;failed to unmount&rdquo; every time. The layer that refuses is <code>storagekitd</code>, sitting above DiskArbitration. A direct <code>DADiskUnmount</code> unmounts the volume without complaint, needs no root, and spawns no external process — which also happens to be the only way to do it from inside an App Store sandbox. I lost days to a diagnostic tool's opinion.</p>
+
+<p><strong>Paths arrive in two normalisations.</strong> A volume named <code>Сжатый диск</code> is stored decomposed on disk — the <code>й</code> is <code>и</code> plus a combining breve. The same path typed into a save dialog can stay composed. Compare them directly and they are not equal, silently, and a mounted volume appears disconnected. I found this by writing the fix wrong: I normalised one side, which broke exactly the case it was meant to protect. Normalise both sides or neither.</p>
+
+<h2>What the numbers actually look like</h2>
+
+<p>Compression ratios in marketing copy are chosen by the marketer. Here are mine, measured, including the one that is bad for me:</p>
+
+<table>
+  <tr><th>data</th><th>ratio</th></tr>
+  <tr><td><code>node_modules</code>, 14,885 files, 137 MiB</td><td>×4.05</td></tr>
+  <tr><td>a working data folder of my own, 385 MiB</td><td>×3.38</td></tr>
+  <tr><td>installed games, 100 GB</td><td>×1.01</td></tr>
+</table>
+
+<p>That last row is the honest answer to &ldquo;should I use this&rdquo;. If your disk is full of video, photos, music and games, it is already compressed, and a compressing file system will give you back 645 MB out of 100 GB while burning every core for five minutes. Do not buy it. If your disk is full of caches, dependency trees, dumps, logs and VM images, the first two rows are what you should expect.</p>
+
+<p>Throughput is 580 files a second on the compact write path, against 588 with the kernel-offloaded path — a 1.4% difference that I expected to be much larger, and which is the reason the offloaded path is no longer the default.</p>
+
+<h2>Would I do it again</h2>
+
+<p>FSKit is young. The documentation exists but is thin, the contracts are load bearing, and a mistake costs you somebody's files rather than a stack trace. Every macOS update is a chance for the module to break, so this is maintenance, not a finished thing.</p>
+
+<p>But writing a file system in Swift, in user space, that the Finder mounts on a double click, would have been a kernel extension and a code-signing saga two years ago. That part genuinely works.</p>
+
+<hr>
+
+<p class="after">The result is <a href="https://apps.apple.com/app/id6797833109">DenseDrive</a> — a compressed disk for macOS, free up to 8 GB so you can measure it on your own data before deciding. It can also encrypt, which no other compressing option on macOS does; it is not, and does not claim to be, a security product.</p>
+
+</main>
+</body>
+</html>
