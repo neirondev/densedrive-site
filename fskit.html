@@ -74,7 +74,7 @@
 
 <p>It has one property that is rarely mentioned: <strong>compression does not survive a rewrite.</strong> Compress a file, open it, save it, and it is stored uncompressed again. For a photo archive that does not matter. For anything a program writes to — a build cache, a database, a VM image, a log — it means the compression you applied on Monday is gone by Tuesday.</p>
 
-<p>I wanted the compression to live in the file system instead of in a file attribute, so that a rewritten block comes back compressed. macOS 15 introduced FSKit, which lets you write a file system in user space without a kernel extension. So I wrote one.</p>
+<p>I wanted the compression to live in the file system instead of in a file attribute, so that a rewritten block comes back compressed. macOS 15.4 introduced FSKit, which lets you write a file system in user space without a kernel extension. So I wrote one.</p>
 
 <p>This is what it cost me.</p>
 
@@ -153,13 +153,13 @@
 
 <h2>What DenseDrive is</h2>
 
-<p>A DenseDrive disk is a single container file — a sparse bundle — kept in a folder you choose. Open it and it mounts in Finder as an ordinary volume: Spotlight indexes it, drag and drop works, any app can write to it without knowing what it is. Eject it and it is one file again, which you can copy to another Mac and open there.</p>
+<p>A DenseDrive disk is stored as a sparse bundle — a package that Finder shows as a single item and that holds fixed-size band files inside — kept in a folder you choose. Open it and it mounts in Finder as an ordinary volume: Spotlight indexes it, drag and drop works, any app can write to it without knowing what it is. Eject it and it collapses back to that one package, which you can copy to another Mac and open there.</p>
 
 <p>It is worth pointing at caches, dependency trees, database dumps, logs and VM images. It is not worth pointing at a photo library. Volumes can optionally be encrypted with a password — AES-256-GCM, key derived with PBKDF2 — which the <code>decmpfs</code>-based compression tools do not offer. That protects the container at rest; it has had no independent security audit, and I would not present it as a security product.</p>
 
 <div class="release">
   <p><strong>DenseDrive is on the Mac App Store.</strong></p>
-  <p class="release-meta">Requires macOS 26 or later (that is where FSKit lives) · Apple Silicon and Intel · a file system extension ships inside the app and you switch it on once in System Settings · free up to 8 GB of disk capacity, $24.99 once after that, no subscription</p>
+  <p class="release-meta">Requires macOS 26 or later · Apple Silicon and Intel · a file system extension ships inside the app and you switch it on once in System Settings · free up to 8 GB of disk capacity, $24.99 once after that, no subscription</p>
   <p><a class="cta" href="https://apps.apple.com/app/id6797833109">Get it on the Mac App Store</a></p>
 </div>
 
