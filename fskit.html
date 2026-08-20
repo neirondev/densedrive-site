@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The kernel may write there at any time — notes from building a compressing file system on FSKit</title>
 <meta name="description" content="What it cost to write a compressing file system for macOS in user space: a data-eating bug, a documented contract I had not read, and measured numbers including the unflattering one.">
+<link rel="canonical" href="https://neirondev.github.io/densedrive-site/fskit.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="The kernel may write there at any time">
+<meta property="og:description" content="Notes from building a compressing file system on FSKit: a bug that corrupted other files, a documented contract I had not read, and measured numbers including the unflattering one.">
+<meta property="og:url" content="https://neirondev.github.io/densedrive-site/fskit.html">
+<meta property="og:image" content="https://neirondev.github.io/densedrive-site/icon.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="The kernel may write there at any time">
+<meta name="twitter:description" content="Notes from building a compressing file system on FSKit — including the bug that ate other files.">
+<meta name="twitter:image" content="https://neirondev.github.io/densedrive-site/icon.png">
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -30,11 +40,22 @@
   th, td { padding: 9px 0; border-bottom: 1px solid #e8e8ee; }
   td:last-child, th:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   hr { border: 0; border-top: 1px solid #e8e8ee; margin: 48px 0 32px; }
-  .after { color: #555; font-size: 16px; }
+  .release {
+    border: 1px solid #e8e8ee; border-radius: 12px;
+    padding: 20px 22px; margin: 28px 0 0;
+  }
+  .release p { margin: 0 0 12px; }
+  .release p:last-child { margin: 0; }
+  .release-meta { color: #666; font-size: 15px; line-height: 1.55; }
+  .cta {
+    display: inline-block; margin-top: 4px; padding: 11px 22px; border-radius: 10px;
+    background: #3B6BE0; color: #fff; text-decoration: none; font-weight: 600;
+  }
   a { color: #2B5BD0; }
   @media (prefers-color-scheme: dark) {
     body { color: #ececf1; background: #16161a; }
-    .meta, .after { color: #9a9aa5; }
+    .meta, .release-meta { color: #9a9aa5; }
+    .release { border-color: #2c2c34; }
     th, td, hr { border-color: #2c2c34; }
     code { background: #24242b; }
     a { color: #8AB0FF; }
@@ -46,7 +67,7 @@
 
 <header>
   <h1>The kernel may write there at any time</h1>
-  <p class="meta">Notes from building a compressing file system on FSKit · August 2026</p>
+  <p class="meta">What I learned building DenseDrive, a compressing file system for macOS in user space · August 2026</p>
 </header>
 
 <p>macOS has had transparent file compression since 2011. It is called <code>decmpfs</code>, it is what makes a fresh install of the OS smaller than the sum of its files, and you can turn it on yourself with <code>afsctool</code> or <code>applesauce</code>.</p>
@@ -77,7 +98,21 @@
 
 <p><strong>This is not an Apple bug.</strong> The behaviour is documented, in the file I should have read first. It is the kind of contract that is invisible until you violate it, and then it is invisible for a while longer, because it corrupts data belonging to a <em>different</em> file than the one you were touching.</p>
 
-<h3>The methodology lesson is the bigger one</h3>
+<h2>Why the shipped build is not the build in this story</h2>
+
+<p>The bug above was found and fixed in development. But &ldquo;I fixed it&rdquo; is a weak thing to say to someone deciding whether to hand you their files, so here is what the format does instead of resting on my confidence.</p>
+
+<p><strong>Every block carries an XXH64 checksum, verified on read.</strong> Corruption does not pass silently: it surfaces as an error naming the file and the block index. That is the difference between losing data and knowing you lost it.</p>
+
+<p><strong>Two superblocks with generation numbers.</strong> A commit writes the new snapshot into free space and only then switches the superblock, so a crash at any step leaves the previous consistent state intact. Commits never write over extents the last snapshot still references.</p>
+
+<p><strong>Clean shutdown is recorded.</strong> If a volume was detached uncleanly, the next mount says so and loads the last consistent state instead of guessing.</p>
+
+<p><strong>There is an integrity check</strong> that walks the superblock, the snapshot and every data block — in the app, and as <code>cdrive check</code>.</p>
+
+<p>None of that turns a young file system into a proven one, and I would not claim otherwise. It makes failure visible rather than silent, which is the property I would want from somebody else's storage code before trusting it with mine.</p>
+
+<h2>The methodology lesson is the bigger one</h2>
 
 <p>At a 25–50% failure rate, one clean run means nothing. It means nothing twice.</p>
 
@@ -116,7 +151,17 @@
 
 <hr>
 
-<p class="after">The result is <a href="https://apps.apple.com/app/id6797833109">DenseDrive</a> — a compressed disk for macOS, free up to 8 GB so you can measure it on your own data before deciding. It can also encrypt, which no other compressing option on macOS does; it is not, and does not claim to be, a security product.</p>
+<h2>What DenseDrive is</h2>
+
+<p>A DenseDrive disk is a single container file — a sparse bundle — kept in a folder you choose. Open it and it mounts in Finder as an ordinary volume: Spotlight indexes it, drag and drop works, any app can write to it without knowing what it is. Eject it and it is one file again, which you can copy to another Mac and open there.</p>
+
+<p>It is worth pointing at caches, dependency trees, database dumps, logs and VM images. It is not worth pointing at a photo library. Volumes can optionally be encrypted with a password — AES-256-GCM, key derived with PBKDF2 — which the <code>decmpfs</code>-based compression tools do not offer. That protects the container at rest; it has had no independent security audit, and I would not present it as a security product.</p>
+
+<div class="release">
+  <p><strong>DenseDrive is on the Mac App Store.</strong></p>
+  <p class="release-meta">Requires macOS 26 or later (that is where FSKit lives) · Apple Silicon and Intel · a file system extension ships inside the app and you switch it on once in System Settings · free up to 8 GB of disk capacity, $24.99 once after that, no subscription</p>
+  <p><a class="cta" href="https://apps.apple.com/app/id6797833109">Get it on the Mac App Store</a></p>
+</div>
 
 </main>
 </body>
