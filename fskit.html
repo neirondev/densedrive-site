@@ -35,6 +35,11 @@
     font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace;
     background: #f2f2f5; padding: 1px 5px; border-radius: 4px;
   }
+  pre {
+    background: #f2f2f5; border-radius: 8px; padding: 14px 16px;
+    overflow-x: auto; font-size: 14px; line-height: 1.5; margin: 18px 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
   table { border-collapse: collapse; width: 100%; margin: 22px 0; font-size: 16px; }
   th { text-align: left; font-weight: 650; }
   th, td { padding: 9px 0; border-bottom: 1px solid #e8e8ee; }
@@ -57,7 +62,8 @@
     .meta, .release-meta { color: #9a9aa5; }
     .release { border-color: #2c2c34; }
     th, td, hr { border-color: #2c2c34; }
-    code { background: #24242b; }
+    code, pre { background: #24242b; }
+    pre code { background: none; }
     a { color: #8AB0FF; }
   }
 </style>
@@ -122,7 +128,15 @@
 
 <h2>Three other things macOS taught me</h2>
 
-<p><strong>APFS materialises small sparse files.</strong> I packaged the container as a sparse bundle — a directory of fixed-size &ldquo;band&rdquo; files, the format Apple uses for sparse disk images. With Apple's default band size of 8 MiB, a volume holding 114 MiB of compressed data occupied 2.1 GB on disk: every band that was touched at all was allocated in full. Measured on an M4 Max: write 4 KiB into a hole and look at the allocation — 8 MiB band allocates 8 MiB, 16 MiB allocates 16 MiB, 20 MiB allocates 20 KiB. The threshold sits between 16 and 20 MiB. I use 32 MiB bands.</p>
+<p><strong>APFS materialises small sparse files.</strong> I packaged the container as a sparse bundle — a directory of fixed-size &ldquo;band&rdquo; files, the format Apple uses for sparse disk images. With Apple's default band size of 8 MiB, a volume holding a couple of hundred megabytes of compressed data occupied gigabytes on disk: every band that was touched at all had been allocated in full, hole and all.</p>
+
+<p>There is a size below which APFS stops keeping the hole and just writes the whole extent out. I am deliberately not quoting the number, because when I went back to re-measure it before publishing this, I did not get the figure I had written down — and a threshold that moves between machines or OS versions is worth less than the method. The method is three lines:</p>
+
+<pre><code>python3 -c 'open("b","wb").truncate(32&lt;&lt;20)'
+python3 -c 'f=open("b","r+b"); f.seek(16&lt;&lt;20); f.write(b"\0"*4096)'
+stat -f '%z logical, %b blocks' b</code></pre>
+
+<p>Run that for a few band sizes on your own machine and you will see where the cliff is on yours. Mine is well above 8 MiB, which is all I needed to know: I use 32 MiB bands.</p>
 
 <p><strong><code>diskutil</code> is not the disk arbitration layer.</strong> For a long time I believed FSKit volumes could not be unmounted programmatically, because <code>diskutil unmount</code> answered &ldquo;failed to unmount&rdquo; every time. The layer that refuses is <code>storagekitd</code>, sitting above DiskArbitration. A direct <code>DADiskUnmount</code> unmounts the volume without complaint, needs no root, and spawns no external process — which also happens to be the only way to do it from inside an App Store sandbox. I lost days to a diagnostic tool's opinion.</p>
 
