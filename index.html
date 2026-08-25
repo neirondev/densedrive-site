@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DenseDrive — a compressed disk for macOS</title>
 <meta name="description" content="A macOS disk where compression lives in the file system, so a rewritten file comes back compressed. Free up to 8 GB.">
+<link rel="canonical" href="https://densedrive.app/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="DenseDrive">
+<meta property="og:description" content="A macOS disk where compression lives in the file system, so a rewritten file comes back compressed. Measured: 4.05x on node_modules, 1.01x on media.">
+<meta property="og:url" content="https://densedrive.app/">
+<meta property="og:image" content="https://densedrive.app/icon.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://densedrive.app/icon.png">
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -80,6 +88,13 @@
 <p>
   <a class="cta" href="https://apps.apple.com/app/id6797833109">Get it on the Mac App Store</a><br>
   <span class="note">Free up to 8 GB, so you can measure it on your own data first.</span>
+</p>
+
+<p class="note">
+  If you would rather read how it is built than install it:
+  <a href="fskit.html">notes from writing a file system on FSKit</a> &mdash;
+  the bug that corrupted other people&rsquo;s data, the API contract I had not
+  read, and the numbers, including the unflattering one.
 </p>
 
 <footer>
